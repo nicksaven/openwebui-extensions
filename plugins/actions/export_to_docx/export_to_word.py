@@ -20,6 +20,7 @@ import time
 import io
 import asyncio
 import logging
+import json
 import hashlib
 import struct
 import zlib
@@ -130,6 +131,19 @@ _ALL_DETAILS_RE = re.compile(
 _THINK_RE = re.compile(r"<think\b[^>]*>.*?</think\s*>", re.IGNORECASE | re.DOTALL)
 _ANALYSIS_RE = re.compile(
     r"<analysis\b[^>]*>.*?</analysis\s*>", re.IGNORECASE | re.DOTALL
+)
+
+_TRUSTED_MERMAID_JS_URL = (
+    "https://cdn.jsdelivr.net/npm/mermaid@11.12.2/dist/mermaid.min.js"
+)
+_TRUSTED_MERMAID_JS_SRI = (
+    "sha384-1ggI9FC3CkghppRD/XCR4aD+jp4DxwXlJIW0wxhyTLNKuiZEW3c4BwcjKXl0iVAJ"
+)
+_TRUSTED_JSZIP_URL = (
+    "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"
+)
+_TRUSTED_JSZIP_SRI = (
+    "sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG"
 )
 
 
@@ -472,8 +486,6 @@ class Action:
             return
 
         try:
-            import json
-
             js_code = f"""
                 (async function() {{
                     console.group("🛠️ {title}");
@@ -485,6 +497,15 @@ class Action:
             await emitter({"type": "execute", "data": {"code": js_code}})
         except Exception as e:
             print(f"Error emitting debug log: {e}")
+
+    def _trusted_client_script(self, configured_url: str, trusted_url: str, sri: str):
+        """Return the pinned script URL/SRI pair, rejecting untrusted overrides."""
+        url = (configured_url or "").strip()
+        if url and url != trusted_url:
+            logger.warning(
+                "Ignoring untrusted client-side script URL override: %s", url
+            )
+        return trusted_url, sri
 
     async def action(
         self,
@@ -701,6 +722,23 @@ class Action:
                 doc_buffer.seek(0)
                 file_content = doc_buffer.read()
                 base64_blob = base64.b64encode(file_content).decode("utf-8")
+                mermaid_url, mermaid_sri = self._trusted_client_script(
+                    self.valves.MERMAID_JS_URL,
+                    _TRUSTED_MERMAID_JS_URL,
+                    _TRUSTED_MERMAID_JS_SRI,
+                )
+                jszip_url, jszip_sri = self._trusted_client_script(
+                    self.valves.MERMAID_JSZIP_URL,
+                    _TRUSTED_JSZIP_URL,
+                    _TRUSTED_JSZIP_SRI,
+                )
+                js_base64_blob = json.dumps(base64_blob)
+                js_filename_json = json.dumps(js_filename)
+                js_mermaid_url = json.dumps(mermaid_url)
+                js_mermaid_sri = json.dumps(mermaid_sri)
+                js_jszip_url = json.dumps(jszip_url)
+                js_jszip_sri = json.dumps(jszip_sri)
+                js_bg_raw = json.dumps((self.valves.MERMAID_BACKGROUND or "").strip())
 
                 # Trigger file download
                 if __event_call__:
@@ -710,13 +748,15 @@ class Action:
                             "data": {
                                 "code": f"""
                                 (async function() {{
-                                    const base64Data = "{base64_blob}";
-                                    const filename = "{js_filename}";
-	                                    const mermaidUrl = "{self.valves.MERMAID_JS_URL}";
-	                                    const jszipUrl = "{self.valves.MERMAID_JSZIP_URL}";
+                                    const base64Data = {js_base64_blob};
+                                    const filename = {js_filename_json};
+	                                    const mermaidUrl = {js_mermaid_url};
+                                        const mermaidIntegrity = {js_mermaid_sri};
+	                                    const jszipUrl = {js_jszip_url};
+                                        const jszipIntegrity = {js_jszip_sri};
 	                                    const pngScale = {float(self.valves.MERMAID_PNG_SCALE)};
 	                                    const displayScale = {float(self.valves.MERMAID_DISPLAY_SCALE)};
-	                                    const bgRaw = "{(self.valves.MERMAID_BACKGROUND or '').strip()}";
+	                                    const bgRaw = {js_bg_raw};
 	                                    const bg = (bgRaw || "").trim();
 	                                    const bgFill = (bg && bg.toLowerCase() !== "transparent") ? bg : "";
 	                                    const themeBackground = bgFill || "transparent";
@@ -733,15 +773,19 @@ class Action:
                                         document.body.removeChild(a);
                                     }}
 
-                                    async function loadScript(url, globalName) {{
-                                        if (globalName && window[globalName]) return;
+                                    async function loadScript(url, globalName, integrity) {{
                                         await new Promise((resolve, reject) => {{
                                             const script = document.createElement("script");
                                             script.src = url;
+                                            script.integrity = integrity;
+                                            script.crossOrigin = "anonymous";
                                             script.onload = resolve;
                                             script.onerror = reject;
                                             document.head.appendChild(script);
                                         }});
+                                        if (globalName && !window[globalName]) {{
+                                            throw new Error(`Trusted script loaded but ${{globalName}} was not defined`);
+                                        }}
                                     }}
 
                                     function decodeBase64ToUint8Array(b64) {{
@@ -887,8 +931,8 @@ class Action:
                                     }}
 
                                     try {{
-                                        await loadScript(jszipUrl, "JSZip");
-                                        await loadScript(mermaidUrl, "mermaid");
+                                        await loadScript(jszipUrl, "JSZip", jszipIntegrity);
+                                        await loadScript(mermaidUrl, "mermaid", mermaidIntegrity);
 
                                         // Mermaid init: disable htmlLabels to keep SVG Word-friendly; PNG fallback still included.
 	                                        try {{
