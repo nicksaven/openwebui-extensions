@@ -13,6 +13,7 @@ import os
 import pandas as pd
 import re
 import base64
+import json
 from fastapi import FastAPI, HTTPException
 from typing import Optional, Callable, Awaitable, Any, List, Dict
 import datetime
@@ -253,14 +254,16 @@ class Action:
                         status_code=400, detail="No tables found in the selected scope."
                     )
 
-                # Deduplicate sheet names
+                # Deduplicate sheet names while preserving Excel's 31-character limit.
                 final_sheet_names = []
                 seen_names = {}
                 for name in all_sheet_names:
-                    base_name = name
+                    base_name = self.clean_sheet_name(name)
+                    name = base_name
                     counter = 1
                     while name in seen_names:
-                        name = f"{base_name} ({counter})"
+                        suffix = f" ({counter})"
+                        name = f"{base_name[: 31 - len(suffix)]}{suffix}"
                         counter += 1
                     seen_names[name] = True
                     final_sheet_names.append(name)
@@ -335,8 +338,13 @@ class Action:
                     workbook_name = f"{user_name}_{formatted_date}"
                 else:
                     workbook_name = self.clean_filename(title)
+                if not workbook_name:
+                    workbook_name = self.clean_filename(f"{user_name}_{formatted_date}")
+                if not workbook_name:
+                    workbook_name = f"export_{formatted_date}"
 
                 filename = f"{workbook_name}.xlsx"
+                js_filename = json.dumps(filename, ensure_ascii=False)
                 excel_file_path = os.path.join(
                     "app", "backend", "data", "temp", filename
                 )
@@ -367,7 +375,7 @@ class Action:
                                         arrayBuffer[i] = binaryData.charCodeAt(i);
                                     }}
                                     const blob = new Blob([arrayBuffer], {{ type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }});
-                                    const filename = "{filename}";
+                                    const filename = {js_filename};
 
                                     const url = URL.createObjectURL(blob);
                                     const a = document.createElement("a");
@@ -718,12 +726,48 @@ class Action:
         return workbook_name, sheet_names
 
     def clean_filename(self, name: str) -> str:
-        """Clean illegal characters in filename"""
-        return re.sub(r'[\\/*?:"<>|]', "", name).strip()
+        """Clean untrusted text for use as a cross-platform download filename."""
+        if not isinstance(name, str):
+            return ""
+
+        cleaned = re.sub(r'[\\/*?:"<>|]', " ", name)
+        cleaned = re.sub(r"[\x00-\x1f\x7f]", " ", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip().strip(".")
+        cleaned = cleaned[:80].strip().strip(".")
+
+        if cleaned.upper() in {
+            "CON",
+            "PRN",
+            "AUX",
+            "NUL",
+            "COM1",
+            "COM2",
+            "COM3",
+            "COM4",
+            "COM5",
+            "COM6",
+            "COM7",
+            "COM8",
+            "COM9",
+            "LPT1",
+            "LPT2",
+            "LPT3",
+            "LPT4",
+            "LPT5",
+            "LPT6",
+            "LPT7",
+            "LPT8",
+            "LPT9",
+        }:
+            return f"{cleaned}_export"
+
+        return cleaned
 
     def clean_sheet_name(self, name: str) -> str:
         """Clean sheet name (limit 31 chars, remove illegal chars)"""
-        name = re.sub(r"[\\/*?[\]:]", "", name).strip()
+        name = re.sub(r"[\\/*?[\]:]", "", str(name)).strip().strip("'")
+        if not name:
+            name = "Sheet"
         return name[:31] if len(name) > 31 else name
 
     # ======================== Enhanced Formatting ========================
