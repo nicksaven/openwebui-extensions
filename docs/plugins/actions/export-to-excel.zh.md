@@ -1,14 +1,13 @@
 # Export to Excel（导出到 Excel）
 
 <span class="category-badge action">Action</span>
-<span class="version-badge">v0.3.9</span>
+<span class="version-badge">v0.3.10</span>
 
 将聊天记录导出为 Excel 表格，便于分析、归档和分享。
 
 
-### v0.3.9 更新内容
-- 📏 **可配置行高**：新增 `ROW_HEIGHT` 配置项，可控制数据行高度。设为 `0`（默认）根据内容自动调整，或设置固定值（如 `20`）以获得紧凑的单行显示。
-- 📐 **可配置列宽**：新增 `COLUMN_WIDTH` 配置项，可控制列宽。设为 `0`（默认）根据内容自动调整，或设置固定值（如 `15`）以获得统一的紧凑列宽。
+### v0.3.10 更新内容
+- ⚠️ **更清晰的空导出提示**：当所选范围内没有表格时，插件会提示 Excel 导出需要先生成表格，不再显示技术性的 HTTP 400 错误。
 
 ---
 

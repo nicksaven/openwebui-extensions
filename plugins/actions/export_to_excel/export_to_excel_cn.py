@@ -3,7 +3,7 @@ title: 导出为 Excel
 author: Fu-Jie
 author_url: https://github.com/Fu-Jie/openwebui-extensions
 funding_url: https://github.com/open-webui
-version: 0.3.9
+version: 0.3.10
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNSAySDZhMiAyIDAgMCAwLTIgMnYxNmEyIDIgMCAwIDAgMiAyaDEyYTIgMiAwIDAgMCAyLTJWN1oiLz48cGF0aCBkPSJNMTQgMnY0YTIgMiAwIDAgMCAyIDJoNCIvPjxwYXRoIGQ9Ik04IDEzaDIiLz48cGF0aCBkPSJNMTQgMTNoMiIvPjxwYXRoIGQ9Ik04IDE3aDIiLz48cGF0aCBkPSJNMTQgMTdoMiIvPjwvc3ZnPg==
 description: 从聊天消息中提取表格并导出为 Excel (.xlsx) 文件，支持智能格式化。
 """
@@ -106,6 +106,18 @@ class Action:
                 {"type": "notification", "data": {"type": ntype, "content": content}}
             )
 
+    @staticmethod
+    def _get_no_tables_warning(language: str) -> str:
+        """返回没有可导出表格时的本地化操作提示。"""
+        locale = (language or "zh").lower().replace("_", "-").split("-", 1)[0]
+        messages = {
+            "en": "Text without tables cannot be exported to Excel. Generate a table first, then try again.",
+            "ru": "Нет возможности выгрузить текст без таблиц в Excel. Для начала сформируйте таблицу.",
+        }
+        return messages.get(
+            locale, "无法将不含表格的文本导出到 Excel。请先生成表格，然后重试。"
+        )
+
     async def _emit_debug_log(self, emitter, title: str, data: dict):
         """在浏览器控制台打印结构化调试日志"""
         if not self.valves.SHOW_DEBUG_LOG or not emitter:
@@ -135,6 +147,9 @@ class Action:
         __request__: Optional[Any] = None,
     ):
         print(f"action:{__name__}")
+        user_language = "zh-CN"
+        user_name = "User"
+        user_id = "unknown_user"
         if isinstance(__user__, (list, tuple)):
             user_language = (
                 __user__[0].get("language", "en-US") if __user__ else "en-US"
@@ -239,9 +254,14 @@ class Action:
                         all_sheet_names.append(sheet_name)
 
                 if not all_tables:
-                    raise HTTPException(
-                        status_code=400, detail="在选定范围内未找到表格。"
+                    warning_message = self._get_no_tables_warning(user_language)
+                    await self._emit_status(
+                        __event_emitter__, "没有可导出的表格", done=True
                     )
+                    await self._emit_notification(
+                        __event_emitter__, warning_message, "warning"
+                    )
+                    return {"message": warning_message, "status": "warning"}
 
                 # Deduplicate sheet names
                 final_sheet_names = []

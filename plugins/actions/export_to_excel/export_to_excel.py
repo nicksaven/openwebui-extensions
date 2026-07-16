@@ -3,7 +3,7 @@ title: Export to Excel
 author: Fu-Jie, Nick Saven
 author_url: https://github.com/nicksaven/openwebui-extensions
 funding_url: https://github.com/open-webui
-version: 0.3.9-1
+version: 0.3.10
 openwebui_id: 244b8f9d-7459-47d6-84d3-c7ae8e3ec710
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNSAySDZhMiAyIDAgMCAwLTIgMnYxNmEyIDIgMCAwIDAgMiAyaDEyYTIgMiAwIDAgMCAyLTJWN1oiLz48cGF0aCBkPSJNMTQgMnY0YTIgMiAwIDAgMCAyIDJoNCIvPjxwYXRoIGQ9Ik04IDEzaDIiLz48cGF0aCBkPSJNMTQgMTNoMiIvPjxwYXRoIGQ9Ik04IDE3aDIiLz48cGF0aCBkPSJNMTQgMTdoMiIvPjwvc3ZnPg==
 description: Extracts tables from chat messages and exports them to Excel (.xlsx) files with smart formatting.
@@ -108,6 +108,19 @@ class Action:
                 {"type": "notification", "data": {"type": ntype, "content": content}}
             )
 
+    @staticmethod
+    def _get_no_tables_warning(language: str) -> str:
+        """Returns a localized, actionable warning when there is nothing to export."""
+        locale = (language or "en").lower().replace("_", "-").split("-", 1)[0]
+        messages = {
+            "ru": "Нет возможности выгрузить текст без таблиц в Excel. Для начала сформируйте таблицу.",
+            "zh": "无法将不含表格的文本导出到 Excel。请先生成表格，然后重试。",
+        }
+        return messages.get(
+            locale,
+            "Text without tables cannot be exported to Excel. Generate a table first, then try again.",
+        )
+
     async def _emit_debug_log(self, emitter, title: str, data: dict):
         """Print structured debug logs in the browser console"""
         if not self.valves.SHOW_DEBUG_LOG or not emitter:
@@ -137,6 +150,9 @@ class Action:
         __request__: Optional[Any] = None,
     ):
         print(f"action:{__name__}")
+        user_language = "en-US"
+        user_name = "User"
+        user_id = "unknown_user"
         if isinstance(__user__, (list, tuple)):
             user_language = (
                 __user__[0].get("language", "en-US") if __user__ else "en-US"
@@ -250,9 +266,14 @@ class Action:
                         all_sheet_names.append(sheet_name)
 
                 if not all_tables:
-                    raise HTTPException(
-                        status_code=400, detail="No tables found in the selected scope."
+                    warning_message = self._get_no_tables_warning(user_language)
+                    await self._emit_status(
+                        __event_emitter__, "No tables to export", done=True
                     )
+                    await self._emit_notification(
+                        __event_emitter__, warning_message, "warning"
+                    )
+                    return {"message": warning_message, "status": "warning"}
 
                 # Deduplicate sheet names while preserving Excel's 31-character limit.
                 final_sheet_names = []
