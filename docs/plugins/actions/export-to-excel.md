@@ -1,13 +1,13 @@
 # Export to Excel
 
 <span class="category-badge action">Action</span>
-<span class="version-badge">v0.3.8</span>
+<span class="version-badge">v0.3.10</span>
 
 Export chat conversations to Excel spreadsheet format for analysis, archiving, and sharing.
 
 
-### What's New in v0.3.8
-- ⚡ **Open WebUI 0.9.x Compatibility**: Added runtime version detection and async DB call adapters for `Users.get_user_by_id` and `Chats.get_chat_by_id` — ensuring seamless compatibility with Open WebUI 0.9.x.
+### What's New in v0.3.10
+- ⚠️ **Clear Empty-Export Warning**: When the selected scope has no tables, the plugin now explains that Excel export requires a table instead of showing a technical HTTP 400 error.
 
 ---
 
