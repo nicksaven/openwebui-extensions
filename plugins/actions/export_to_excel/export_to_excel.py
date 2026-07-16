@@ -14,6 +14,7 @@ import pandas as pd
 import re
 import base64
 import json
+import logging
 from fastapi import FastAPI, HTTPException
 from typing import Optional, Callable, Awaitable, Any, List, Dict
 import datetime
@@ -48,6 +49,7 @@ async def _call_db(method, *args, **kwargs):
 
 
 app = FastAPI()
+logger = logging.getLogger(__name__)
 
 
 class Action:
@@ -121,6 +123,52 @@ class Action:
             "Text without tables cannot be exported to Excel. Generate a table first, then try again.",
         )
 
+    @staticmethod
+    def _get_no_tables_status(language: str) -> str:
+        locale = (language or "en").lower().replace("_", "-").split("-", 1)[0]
+        return {
+            "ru": "Нет таблиц для экспорта",
+            "zh": "没有可导出的表格",
+        }.get(locale, "No tables to export")
+
+    async def _get_interface_language(
+        self,
+        fallback: str,
+        event_call: Optional[Callable[[Any], Awaitable[Any]]],
+    ) -> str:
+        """Gets the language selected in Open WebUI instead of the browser locale."""
+        if not event_call:
+            return fallback
+
+        try:
+            frontend_language = await asyncio.wait_for(
+                event_call(
+                    {
+                        "type": "execute",
+                        "data": {
+                            "code": """
+                            return (
+                                localStorage.getItem('locale') ||
+                                localStorage.getItem('language') ||
+                                document.documentElement.lang ||
+                                navigator.language ||
+                                ''
+                            );
+                            """
+                        },
+                    }
+                ),
+                timeout=2.0,
+            )
+            if isinstance(frontend_language, str) and frontend_language.strip():
+                return frontend_language.strip()
+        except asyncio.TimeoutError:
+            logger.warning("Open WebUI interface language detection timed out")
+        except Exception as exc:
+            logger.warning("Open WebUI interface language detection failed: %s", exc)
+
+        return fallback
+
     async def _emit_debug_log(self, emitter, title: str, data: dict):
         """Print structured debug logs in the browser console"""
         if not self.valves.SHOW_DEBUG_LOG or not emitter:
@@ -167,6 +215,10 @@ class Action:
             user_language = __user__.get("language", "en-US")
             user_name = __user__.get("name", "User")
             user_id = __user__.get("id", "unknown_user")
+
+        user_language = await self._get_interface_language(
+            user_language, __event_call__
+        )
 
         if __event_emitter__:
             await __event_emitter__(
@@ -268,7 +320,9 @@ class Action:
                 if not all_tables:
                     warning_message = self._get_no_tables_warning(user_language)
                     await self._emit_status(
-                        __event_emitter__, "No tables to export", done=True
+                        __event_emitter__,
+                        self._get_no_tables_status(user_language),
+                        done=True,
                     )
                     await self._emit_notification(
                         __event_emitter__, warning_message, "warning"

@@ -12,6 +12,7 @@ import os
 import pandas as pd
 import re
 import base64
+import logging
 from fastapi import FastAPI, HTTPException
 from typing import Optional, Callable, Awaitable, Any, List, Dict
 import datetime
@@ -46,6 +47,7 @@ async def _call_db(method, *args, **kwargs):
 
 
 app = FastAPI()
+logger = logging.getLogger(__name__)
 
 
 class Action:
@@ -118,6 +120,52 @@ class Action:
             locale, "无法将不含表格的文本导出到 Excel。请先生成表格，然后重试。"
         )
 
+    @staticmethod
+    def _get_no_tables_status(language: str) -> str:
+        locale = (language or "zh").lower().replace("_", "-").split("-", 1)[0]
+        return {
+            "en": "No tables to export",
+            "ru": "Нет таблиц для экспорта",
+        }.get(locale, "没有可导出的表格")
+
+    async def _get_interface_language(
+        self,
+        fallback: str,
+        event_call: Optional[Callable[[Any], Awaitable[Any]]],
+    ) -> str:
+        """获取 Open WebUI 中选择的界面语言，而不是浏览器语言。"""
+        if not event_call:
+            return fallback
+
+        try:
+            frontend_language = await asyncio.wait_for(
+                event_call(
+                    {
+                        "type": "execute",
+                        "data": {
+                            "code": """
+                            return (
+                                localStorage.getItem('locale') ||
+                                localStorage.getItem('language') ||
+                                document.documentElement.lang ||
+                                navigator.language ||
+                                ''
+                            );
+                            """
+                        },
+                    }
+                ),
+                timeout=2.0,
+            )
+            if isinstance(frontend_language, str) and frontend_language.strip():
+                return frontend_language.strip()
+        except asyncio.TimeoutError:
+            logger.warning("Open WebUI 界面语言检测超时")
+        except Exception as exc:
+            logger.warning("Open WebUI 界面语言检测失败: %s", exc)
+
+        return fallback
+
     async def _emit_debug_log(self, emitter, title: str, data: dict):
         """在浏览器控制台打印结构化调试日志"""
         if not self.valves.SHOW_DEBUG_LOG or not emitter:
@@ -164,6 +212,10 @@ class Action:
             user_language = __user__.get("language", "en-US")
             user_name = __user__.get("name", "User")
             user_id = __user__.get("id", "unknown_user")
+
+        user_language = await self._get_interface_language(
+            user_language, __event_call__
+        )
 
         if __event_emitter__:
             await __event_emitter__(
@@ -256,7 +308,9 @@ class Action:
                 if not all_tables:
                     warning_message = self._get_no_tables_warning(user_language)
                     await self._emit_status(
-                        __event_emitter__, "没有可导出的表格", done=True
+                        __event_emitter__,
+                        self._get_no_tables_status(user_language),
+                        done=True,
                     )
                     await self._emit_notification(
                         __event_emitter__, warning_message, "warning"

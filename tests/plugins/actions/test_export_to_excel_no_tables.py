@@ -65,15 +65,21 @@ def test_plain_text_returns_localized_warning_instead_of_http_error(
 ):
     module = _load_plugin(monkeypatch, filename)
     events = []
+    event_calls = []
 
     async def emit(event):
         events.append(event)
 
+    async def event_call(event):
+        event_calls.append(event)
+        return "ru-RU"
+
     result = asyncio.run(
         module.Action().action(
             {"messages": [{"role": "assistant", "content": "Только обычный текст."}]},
-            __user__={"id": "user-1", "name": "User", "language": "ru-RU"},
+            __user__={"id": "user-1", "name": "User", "language": "en-US"},
             __event_emitter__=emit,
+            __event_call__=event_call,
         )
     )
 
@@ -82,6 +88,8 @@ def test_plain_text_returns_localized_warning_instead_of_http_error(
         "Для начала сформируйте таблицу."
     )
     assert result == {"message": expected, "status": "warning"}
+    assert event_calls[0]["type"] == "execute"
+    assert "localStorage.getItem('locale')" in event_calls[0]["data"]["code"]
     assert any(
         event == {
             "type": "notification",
@@ -95,6 +103,8 @@ def test_plain_text_returns_localized_warning_instead_of_http_error(
         for event in events
     )
     assert any(
-        event.get("type") == "status" and event.get("data", {}).get("done") is True
+        event.get("type") == "status"
+        and event.get("data")
+        == {"description": "Нет таблиц для экспорта", "done": True}
         for event in events
     )
